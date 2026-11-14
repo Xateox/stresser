@@ -94,7 +94,8 @@ class NonInteractiveTests(unittest.TestCase):
 
     def test_valeurs_invalides_rejetees_par_argparse(self):
         for argv in (["-p", "70000"], ["-p", "0"], ["--duration", "0"], ["--concurrency", "0"],
-                     ["--rate", "-5"], ["--proto", "icmp"], ["--size", "abc"]):
+                     ["--rate", "-5"], ["--proto", "icmp"], ["--size", "abc"],
+                     ["--concurrency", "70000"], ["--rate", "2000000"]):   # au-delà des maxima
             with self.subTest(argv=argv):
                 code, _, _, execute = run_cli(["-t", "192.168.35.14", *argv])
                 self.assertEqual(code, 2)

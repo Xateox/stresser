@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import signal
+import threading
 import time
 from contextlib import suppress
 
@@ -139,7 +140,14 @@ async def _reporter(cfg: RunConfig, stats: TcpStats, display) -> None:
         display.update(stats.live_fields(cfg))
 
 
-async def _run(cfg: RunConfig, stats: TcpStats, display) -> None:
+async def _watch_external_stop(external: threading.Event, stop: asyncio.Event) -> None:
+    """Relaie une demande d'arrêt venue d'un autre thread (bouton du panel web)."""
+    while not external.is_set():
+        await asyncio.sleep(0.1)
+    stop.set()
+
+
+async def _run(cfg: RunConfig, stats: TcpStats, display, external_stop: threading.Event | None = None) -> None:
     loop = asyncio.get_running_loop()
     stop = asyncio.Event()
     # SIGTERM (arrêt de la VM, `kill`) : même arrêt propre que Ctrl+C. Windows ne
@@ -161,10 +169,13 @@ async def _run(cfg: RunConfig, stats: TcpStats, display) -> None:
         ))
         for index in range(cfg.concurrency)
     ]
-    helpers = [asyncio.create_task(_reporter(cfg, stats, display)), asyncio.create_task(stop.wait())]
+    stopper = asyncio.create_task(stop.wait())
+    helpers = [asyncio.create_task(_reporter(cfg, stats, display)), stopper]
+    if external_stop is not None:
+        helpers.append(asyncio.create_task(_watch_external_stop(external_stop, stop)))
     try:
-        # On attend la fin du test, ou un SIGTERM (stop.wait() se termine alors).
-        await asyncio.wait(helpers[1:], timeout=cfg.duration)
+        # On attend la fin du test, ou une demande d'arrêt (stop.wait() se termine alors).
+        await asyncio.wait([stopper], timeout=cfg.duration)
         stats.interrupted = stop.is_set()
     except asyncio.CancelledError:
         # Ctrl+C : asyncio.run() annule cette tâche. On note l'interruption et on
@@ -180,12 +191,22 @@ async def _run(cfg: RunConfig, stats: TcpStats, display) -> None:
             loop.remove_signal_handler(signal.SIGTERM)
 
 
-def run_tcp(cfg: RunConfig, display) -> TcpStats:
-    """Lance le test TCP et retourne les statistiques (partielles si interrompu)."""
-    stats = TcpStats()
+def run_tcp(
+    cfg: RunConfig,
+    display,
+    stop_event: threading.Event | None = None,
+    stats: TcpStats | None = None,
+) -> TcpStats:
+    """Lance le test TCP et retourne les statistiques (partielles si interrompu).
+
+    `stop_event` et `stats` servent au panel web : le premier permet d'arrêter le
+    test depuis un autre thread, le second de lire les compteurs pendant le test.
+    """
+    if stats is None:
+        stats = TcpStats()
     display.start(f"Test TCP vers {cfg.ip}:{cfg.port} ({cfg.display_name}) - Ctrl+C pour arrêter")
     try:
-        asyncio.run(_run(cfg, stats, display))
+        asyncio.run(_run(cfg, stats, display, stop_event))
     except KeyboardInterrupt:
         # Second Ctrl+C pendant le nettoyage : on rend la main tout de suite.
         stats.interrupted = True

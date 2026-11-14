@@ -77,21 +77,25 @@ class TcpEngineTests(unittest.TestCase):
         self.addCleanup(self.server.shutdown)
 
     def cfg(self, **overrides):
-        values = dict(ip=LOCALHOST, port=self.port, proto="tcp", duration=1.0, concurrency=5)
+        # hold=0.02 bride la cadence (au plus 50 connexions/s par worker). Sans cela,
+        # la suite de tests consomme à elle seule tous les ports source de Windows
+        # (erreur 10048) : c'est la limite décrite dans limits.py, vécue en vrai.
+        values = dict(ip=LOCALHOST, port=self.port, proto="tcp", duration=1.0, concurrency=5, hold=0.02)
         values.update(overrides)
         return RunConfig(**values)
 
     def test_connecter_puis_fermer(self):
+        # Seul test à pleine vitesse (hold=0) : court et avec peu de workers.
         display = FakeDisplay()
-        stats = run_tcp(self.cfg(), display)
+        stats = run_tcp(self.cfg(hold=0, concurrency=2, duration=0.5), display)
         self.assertGreater(stats.succeeded, 0)
         self.assertEqual(stats.failed, 0)
         self.assertEqual(stats.attempted, stats.succeeded + stats.failed + stats.abandoned)
         self.assertEqual(len(stats.latencies_ms), stats.succeeded)
         self.assertEqual(stats.active, 0)               # toutes les connexions sont refermées
-        self.assertLessEqual(stats.peak_active, 5)
+        self.assertLessEqual(stats.peak_active, 2)
         self.assertFalse(stats.interrupted)
-        self.assertAlmostEqual(stats.elapsed(), 1.0, delta=0.5)
+        self.assertAlmostEqual(stats.elapsed(), 0.5, delta=0.4)
         self.assertTrue(display.stopped)
 
     def test_charge_utile_et_reponse(self):
@@ -251,7 +255,8 @@ class EndToEndTests(unittest.TestCase):
         loopback = (ipaddress.ip_network("127.0.0.0/24"),)
         with mock.patch.object(guard, "ALLOWED_NETWORKS", loopback), contextlib.redirect_stdout(out):
             code = cli.main(["-t", "127.0.0.1", "-p", str(server.server_address[1]),
-                             "--duration", "1.5", "--concurrency", "4", "--yes", "--plain"])
+                             "--duration", "1.5", "--concurrency", "4", "--hold", "0.02",
+                             "--yes", "--plain"])
         text = out.getvalue()
         self.assertEqual(code, cli.EXIT_OK)
         self.assertIn("Récapitulatif", text)

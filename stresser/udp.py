@@ -91,17 +91,32 @@ def _recv_loop(sock: socket.socket, stats: UdpStats, stop: threading.Event) -> N
         stats.bytes_recv += len(data)
 
 
-def run_udp(cfg: RunConfig, display) -> UdpStats:
-    """Lance le test UDP et retourne les statistiques (partielles si interrompu)."""
-    stats = UdpStats()
+def run_udp(
+    cfg: RunConfig,
+    display,
+    stop_event: threading.Event | None = None,
+    stats: UdpStats | None = None,
+) -> UdpStats:
+    """Lance le test UDP et retourne les statistiques (partielles si interrompu).
+
+    `stop_event` et `stats` servent au panel web : le premier permet d'arrêter le
+    test depuis un autre thread, le second de lire les compteurs pendant le test.
+    Lève OSError si la socket ne peut pas être préparée (pas de route, par exemple).
+    """
+    if stats is None:
+        stats = UdpStats()
     stop_send = threading.Event()
     stop_recv = threading.Event()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    # connect() en UDP n'envoie rien : il fixe la destination, ce qui permet
-    # d'utiliser send()/recv() et de ne recevoir que les réponses de la cible.
-    sock.connect((str(cfg.ip), cfg.port))
-    sock.settimeout(_SOCKET_TIMEOUT)
+    try:
+        # connect() en UDP n'envoie rien : il fixe la destination, ce qui permet
+        # d'utiliser send()/recv() et de ne recevoir que les réponses de la cible.
+        sock.connect((str(cfg.ip), cfg.port))
+        sock.settimeout(_SOCKET_TIMEOUT)
+    except OSError:
+        sock.close()
+        raise
 
     sender = threading.Thread(target=_send_loop, args=(sock, cfg, stats, stop_send), daemon=True)
     receiver = threading.Thread(target=_recv_loop, args=(sock, stats, stop_recv), daemon=True)
@@ -125,6 +140,9 @@ def run_udp(cfg: RunConfig, display) -> UdpStats:
             # time.sleep() par petites tranches : contrairement à Thread.join(),
             # il est interrompu tout de suite par Ctrl+C, y compris sous Windows.
             time.sleep(0.1)
+            if stop_event is not None and stop_event.is_set():
+                stats.interrupted = True    # arrêt demandé par le panel web
+                break
             if time.perf_counter() >= next_refresh:
                 next_refresh += 1.0
                 display.update(stats.live_fields(cfg))

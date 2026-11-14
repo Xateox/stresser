@@ -95,10 +95,10 @@ def build_parser() -> argparse.ArgumentParser:
     load = parser.add_argument_group("intensité")
     load.add_argument("--duration", type=_bounded(float, 0, strict=True), metavar="S",
                       help=f"durée du test en secondes (défaut : {DEFAULT_DURATION:g})")
-    load.add_argument("--concurrency", type=_bounded(int, 1), metavar="N",
+    load.add_argument("--concurrency", type=_bounded(int, 1, guard.MAX_CONCURRENCY), metavar="N",
                       help=f"TCP : connexions simultanées (défaut : {guard.DEFAULT_CONCURRENCY}, "
                            f"avertissement au-delà de {guard.WARN_CONCURRENCY})")
-    load.add_argument("--rate", type=_bounded(int, 1), metavar="PPS",
+    load.add_argument("--rate", type=_bounded(int, 1, guard.MAX_RATE), metavar="PPS",
                       help=f"UDP : paquets par seconde (défaut : {guard.DEFAULT_RATE}, "
                            f"avertissement au-delà de {guard.WARN_RATE})")
     load.add_argument("--size", type=_bounded(int, 0), metavar="OCTETS",
@@ -217,10 +217,11 @@ def build_config(args: argparse.Namespace, machines: list[Machine], allow_hosts)
         duration = (_ask_number("Durée en secondes", float, DEFAULT_DURATION, 0, strict=True)
                     if interactive else DEFAULT_DURATION)
     if proto == "tcp" and concurrency is None:
-        concurrency = (_ask_number("Connexions simultanées", int, guard.DEFAULT_CONCURRENCY, 1)
+        concurrency = (_ask_number("Connexions simultanées", int, guard.DEFAULT_CONCURRENCY,
+                                   1, guard.MAX_CONCURRENCY)
                        if interactive else guard.DEFAULT_CONCURRENCY)
     if proto == "udp" and rate is None:
-        rate = (_ask_number("Paquets par seconde", int, guard.DEFAULT_RATE, 1)
+        rate = (_ask_number("Paquets par seconde", int, guard.DEFAULT_RATE, 1, guard.MAX_RATE)
                 if interactive else guard.DEFAULT_RATE)
 
     size = args.size
@@ -254,16 +255,21 @@ def ignored_options(args: argparse.Namespace, proto: str) -> list[str]:
 
 # --- Récapitulatif et confirmation -------------------------------------------------
 
+def intensity_text(cfg: RunConfig) -> str:
+    """Résume l'intensité d'un test en une phrase (récapitulatif, panel web)."""
+    if cfg.proto == "udp":
+        return f"{cfg.rate} paquets/s de {cfg.size} octets"
+    payload = f"{cfg.size} octets par connexion" if cfg.size else "connecter puis fermer"
+    text = f"{cfg.concurrency} connexions simultanées, {payload}"
+    if cfg.hold:
+        text += f", maintien {cfg.hold:g} s"
+    if cfg.ramp:
+        text += ", montée progressive"
+    return text
+
+
 def recap_lines(cfg: RunConfig) -> list[str]:
-    if cfg.proto == "tcp":
-        payload = f"{cfg.size} octets par connexion" if cfg.size else "connecter puis fermer"
-        intensity = f"{cfg.concurrency} connexions simultanées, {payload}"
-        if cfg.hold:
-            intensity += f", maintien {cfg.hold:g} s"
-        if cfg.ramp:
-            intensity += ", montée progressive"
-    else:
-        intensity = f"{cfg.rate} paquets/s de {cfg.size} octets"
+    intensity = intensity_text(cfg)
     return [
         "----- Récapitulatif -----",
         f"Cible     : {cfg.ip}",
@@ -349,7 +355,12 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_CANCELLED
 
     print()
-    stats = execute(cfg, plain=args.plain)
+    try:
+        stats = execute(cfg, plain=args.plain)
+    except OSError as exc:
+        # Par exemple : aucune route vers la cible depuis cette machine.
+        _error(f"impossible de lancer le test : {exc.strerror or exc}")
+        return EXIT_CANCELLED
 
     print()
     for line in stats.summary_lines(cfg):

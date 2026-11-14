@@ -38,6 +38,8 @@ DEFAULT_RATE = 1000           # paquets UDP par seconde par défaut (modéré)
 DEFAULT_UDP_SIZE = 64         # taille de paquet UDP par défaut, en octets
 WARN_CONCURRENCY = 1000       # au-delà : avertissement
 WARN_RATE = 20_000            # au-delà : avertissement
+MAX_CONCURRENCY = 65_535      # refus au-delà : une machine n'a pas plus de ports source
+MAX_RATE = 1_000_000          # refus au-delà : hors de portée de Python de toute façon
 
 MAX_TCP_SIZE = 1024 * 1024    # charge utile TCP maximale par connexion (1 Mio)
 MAX_UDP_SIZE = 65_507         # plus gros datagramme UDP possible en IPv4

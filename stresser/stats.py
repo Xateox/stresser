@@ -125,6 +125,22 @@ class TcpStats(_BaseStats):
             ("reçu", human_bytes(self.bytes_recv)),
         ]
 
+    def final_fields(self, cfg: RunConfig) -> list[tuple[str, str]]:
+        """Valeurs à afficher une fois le test fini : totaux et moyennes sur tout le test."""
+        elapsed = self.elapsed()
+        latency = self.latency_summary()
+        return [
+            ("temps", f"{elapsed:.0f}/{cfg.duration:g} s"),
+            ("tentées", str(self.attempted)),
+            ("réussies", str(self.succeeded)),
+            ("échouées", str(self.failed)),
+            ("conn/s moy.", f"{self.succeeded / elapsed:.0f}" if elapsed > 0 else "0"),
+            ("p50", f"{latency.get('p50', 0.0):.1f} ms"),
+            ("p95", f"{latency.get('p95', 0.0):.1f} ms"),
+            ("envoyé", human_bytes(self.bytes_sent)),
+            ("reçu", human_bytes(self.bytes_recv)),
+        ]
+
     def latency_summary(self) -> dict[str, float]:
         """min / moyenne / percentiles / max des temps de connexion, en millisecondes."""
         values = sorted(self.latencies_ms)
@@ -250,6 +266,18 @@ class UdpStats(_BaseStats):
             ("envoyés", str(self.sent)),
             ("paquets/s", f"{pps:.0f}"),
             ("Mbit/s", f"{mbit:.2f}"),
+            ("reçus", str(self.received)),
+            ("port injoignable", str(self.unreachable)),
+        ]
+
+    def final_fields(self, cfg: RunConfig) -> list[tuple[str, str]]:
+        """Valeurs à afficher une fois le test fini : totaux et moyennes sur tout le test."""
+        elapsed = self.elapsed()
+        return [
+            ("temps", f"{elapsed:.0f}/{cfg.duration:g} s"),
+            ("envoyés", str(self.sent)),
+            ("paquets/s moy.", f"{self.sent / elapsed:.0f}" if elapsed > 0 else "0"),
+            ("Mbit/s moy.", f"{mbit_per_s(self.bytes_sent, elapsed):.2f}"),
             ("reçus", str(self.received)),
             ("port injoignable", str(self.unreachable)),
         ]
