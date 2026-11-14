@@ -1,0 +1,31 @@
+# Inventaire des machines du homelab.
+#
+# Format : une machine par ligne
+#     IP   nom   description libre (optionnelle)   [critique] (optionnel)
+#
+# - Le nom est le premier mot après l'IP ; tout le reste est une description.
+# - [critique] : machine dont la saturation coupe d'autres services (hyperviseur,
+#   pare-feu, DNS, stockage). L'outil demande alors de retaper son nom pour confirmer.
+# - Les lignes vides et celles qui commencent par # sont ignorées.
+#
+# Rappel : seules les IP de la plage autorisée (voir stresser/guard.py) peuvent être
+# ciblées. Ajouter une machine ici ne suffit pas à l'autoriser.
+
+192.168.35.11  proxmox                               [critique]
+192.168.35.12  opnsense        (WAN / GUI 8443)      [critique]
+192.168.35.13  adguard                               [critique]
+192.168.35.14  home-assistant
+192.168.35.15  truenas                               [critique]
+192.168.35.16  monitor         (uptime-kuma)
+
+# --- VLAN services (10.10.10.0/24) : hors plage autorisée, donc désactivé ---
+# Pour les réactiver : ajouter la plage dans ALLOWED_NETWORKS (stresser/guard.py)
+# puis décommenter les lignes ci-dessous.
+# 10.10.10.10    npm             (reverse proxy)
+# 10.10.10.11    pbs                                   [critique]
+# 10.10.10.20    vaultwarden
+# 10.10.10.21    gitea
+# 10.10.10.22    gitea-runner
+# 10.10.10.23    postgres        / pgadmin
+# 10.10.10.30    vm-gpu          (immich / litellm / open-webui)
+# 10.10.10.40    vm-torrent

@@ -1,0 +1,3 @@
+# Optionnel : tableau mis à jour en direct pendant le test.
+# Sans rich, l'outil fonctionne quand même, avec un affichage en texte simple.
+rich>=13
