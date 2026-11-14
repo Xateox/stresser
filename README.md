@@ -1,6 +1,6 @@
 # stresser : test de charge TCP/UDP pour mon homelab
 
-Outil en ligne de commande qui mesure comment un service de **mon propre réseau**
+Outil en terminal, avec menus, qui mesure comment un service de **mon propre réseau**
 réagit à beaucoup de connexions TCP ou de paquets UDP : débit, latence, taux d'erreur.
 
 > **Réservé à mes machines.** L'outil refuse toute cible hors de la plage
@@ -9,46 +9,67 @@ réagit à beaucoup de connexions TCP ou de paquets UDP : débit, latence, taux 
 
 ## Installation
 
-Il faut Python 3.11 ou plus récent. L'outil n'a aucune dépendance obligatoire ;
-`rich` (optionnel) ajoute un tableau mis à jour en direct.
-
-**Windows (PowerShell)**
+Il faut Python 3.11 ou plus récent, et rien d'autre : l'outil n'utilise que la
+bibliothèque standard. Aucun droit administrateur ni WSL n'est nécessaire.
 
 ```powershell
-py -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt    # optionnel
-python stress.py --help
+python stress.py          # Windows (ou : py stress.py)
 ```
 
-Sous `cmd`, la commande d'activation est la même. Si PowerShell refuse d'exécuter
-le script d'activation, lancer une fois
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Aucun droit administrateur
-ni WSL n'est nécessaire.
-
-**Linux**
-
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt    # optionnel
-python3 stress.py --help
+python3 stress.py         # Linux
 ```
 
 ## Utilisation
 
-### Mode interactif
+### Avec les menus
 
 ```powershell
 python stress.py
 ```
 
-L'outil liste les machines de l'inventaire. Je choisis un numéro (ou je tape une
-IP), puis il demande le port, le protocole, la durée et l'intensité. Entrée seule
-garde la valeur par défaut indiquée entre crochets. Les options déjà passées sur
-la ligne de commande ne sont pas redemandées.
+Lancé sans option, l'outil s'ouvre sur un menu :
 
-### Mode non interactif
+| Entrée du menu | Rôle |
+|---|---|
+| Lancer un test | Assistant en 5 étapes : machine, protocole, port, intensité, récapitulatif. |
+| Relancer le dernier test | Reprend les mêmes paramètres ; le récapitulatif est réaffiché avant le lancement. |
+| Inventaire des machines | Les machines connues, avec un rechargement du fichier après modification. |
+| Historique de la session | Revoir le résumé des tests lancés depuis l'ouverture du programme. |
+| Réglages | Export CSV, délai de connexion TCP, symboles Unicode ou ASCII, couleurs. |
+| Aide | Ce que mesure l'outil, en bref. |
+
+| Touche | Effet |
+|---|---|
+| Flèches haut / bas | Parcourir le menu (il boucle). |
+| Entrée | Valider. |
+| Échap | Revenir à l'écran précédent, sans perdre ce qui est déjà saisi. |
+| Chiffre 1 à 9 | Choisir directement la ligne portant ce numéro. |
+| Ctrl+C | Pendant un test : l'arrêter et afficher le résumé partiel. Dans un menu : quitter. |
+
+Dans une question à réponse libre (port, durée…), Entrée seule garde la valeur
+entre crochets, et `<` revient en arrière.
+
+L'étape « intensité » propose des profils tout prêts :
+
+| Profil | TCP | UDP |
+|---|---|---|
+| Léger | 10 connexions, 10 s | 100 paquets/s, 10 s |
+| Modéré | 50 connexions, 10 s | 1000 paquets/s, 10 s |
+| Soutenu | 200 connexions, 30 s | 5000 paquets/s, 30 s |
+| Montée progressive | de 1 à 200 connexions en 30 s | |
+| Personnalisé | durée, connexions, octets, maintien, montée | durée, débit, taille |
+
+Pendant le test, un tableau de bord se met à jour chaque seconde : barre
+d'avancement, compteurs, et un mini-graphique du débit. Il laisse ensuite la
+place au résumé.
+
+Les options de test passées sans `-t` (par exemple `python stress.py -p 8123`)
+deviennent les valeurs proposées par défaut dans l'assistant.
+
+### Sans les menus (scripts)
+
+Avec `-t`, tout vient des options et aucun menu ne s'ouvre.
 
 ```powershell
 # 100 connexions TCP simultanées pendant 30 s (connecter puis fermer)
@@ -71,7 +92,7 @@ python stress.py -t 192.168.35.16 -p 3001 --duration 10 --yes
 
 | Option | Rôle | Défaut |
 |---|---|---|
-| `-t IP` | Cible. Sans elle : menu interactif. | menu |
+| `-t IP` | Cible. Sans elle : les menus. | menus |
 | `-p PORT` | Port de la cible. | obligatoire avec `-t` |
 | `--proto tcp\|udp` | Protocole. | `tcp` |
 | `--duration S` | Durée du test, en secondes. | 10 |
@@ -82,7 +103,8 @@ python stress.py -t 192.168.35.16 -p 3001 --duration 10 --yes
 | `--hold S` | TCP : garde chaque connexion ouverte S secondes et compte ce qui est reçu. | 0 |
 | `--timeout S` | TCP : délai maximal d'une connexion. | 3 |
 | `--csv FICHIER` | Ajoute le résumé à un fichier CSV. | aucun |
-| `--plain` | Affichage en texte simple, même si `rich` est installé. | non |
+| `--plain` | Texte simple : ni couleurs, ni menus à flèches, ni tableau de bord. | non |
+| `--ascii` | Cadres et barres en ASCII, si la console affiche mal l'Unicode. | non |
 | `--yes` | Pas de confirmation (exige `-t`). | non |
 | `--allow-host IP` | Autorise ponctuellement une IP privée hors plage. | aucune |
 | `--inventory FICHIER` | Autre fichier d'inventaire. | `inventory.txt` |
@@ -90,47 +112,6 @@ python stress.py -t 192.168.35.16 -p 3001 --duration 10 --yes
 
 Codes de sortie : `0` test terminé, `1` annulé, `2` cible refusée ou paramètre
 invalide, `130` test interrompu par Ctrl+C.
-
-## Panel web
-
-Le panel fait la même chose que la ligne de commande, depuis un navigateur :
-formulaire, récapitulatif à confirmer, statistiques et graphique en direct,
-bouton d'arrêt, historique des tests de la session.
-
-```powershell
-python panel.py            # puis ouvrir l'adresse affichée dans la console
-python panel.py --open     # ouvre directement le navigateur
-python panel.py --csv tests.csv --port 9000
-```
-
-La console affiche une adresse de la forme `http://127.0.0.1:8080/?token=...`.
-Le jeton change à chaque démarrage ; sans lui, le panel refuse tout.
-
-| Option | Rôle | Défaut |
-|---|---|---|
-| `--bind IP` | Adresse d'écoute. `0.0.0.0` = toutes les interfaces. | `127.0.0.1` |
-| `--port PORT` | Port d'écoute. | 8080 |
-| `--allow-host IP` | Autorise une IP privée hors plage pour la session. | aucune |
-| `--csv FICHIER` | Ajoute le résumé de chaque test à un CSV. | aucun |
-| `--inventory FICHIER` | Autre fichier d'inventaire. | `inventory.txt` |
-| `--open` | Ouvre le navigateur par défaut. | non |
-
-**Les garde-fous sont les mêmes** et sont appliqués par le serveur, pas par la
-page : plage autorisée, confirmation obligatoire, nom à retaper pour une machine
-critique, un seul test à la fois. `--allow-host` ne se règle qu'au démarrage.
-
-**Depuis un autre poste (panel sur la VM Linux).** Par défaut le panel n'écoute
-que sur `127.0.0.1`. Le plus sûr est de le laisser ainsi et de passer par un
-tunnel SSH depuis le PC :
-
-```powershell
-ssh -L 8080:127.0.0.1:8080 utilisateur@adresse-de-la-vm
-```
-
-puis d'ouvrir sur le PC l'adresse affichée par le panel. Avec `--bind 0.0.0.0`,
-le panel devient joignable par tout le réseau local : le jeton reste exigé, mais
-il circule en clair (HTTP). Les clients d'une adresse publique sont toujours
-refusés. Ne jamais exposer ce port sur Internet.
 
 ## Inventaire
 
@@ -149,7 +130,8 @@ avant de lancer le test.
 - **Adresses IP uniquement** : pas de nom DNS, pour qu'une résolution de nom ne
   puisse pas envoyer le trafic ailleurs que prévu.
 - **Confirmation** : récapitulatif (cible, machine, port, protocole, intensité,
-  durée) puis accord explicite, sauf avec `--yes`.
+  durée) puis accord explicite, dans les menus comme en ligne de commande. Seul
+  `--yes` (qui exige `-t`) le saute.
 - **Intensité modérée par défaut**, et avertissement au-delà de 1000 connexions
   ou de 20 000 paquets/s.
 - **Ctrl+C** : arrêt propre, sockets fermées, résumé partiel affiché. Sous Linux,
@@ -164,7 +146,7 @@ avant de lancer le test.
 | Connexions tentées / réussies / échouées | Une connexion est réussie quand la poignée de main TCP aboutit. |
 | En cours à l'arrêt | Tentatives qui n'avaient pas encore abouti à la fin du test. |
 | Connexions par seconde | Connexions réussies divisées par la durée réelle. |
-| Latence de connexion | Temps de la poignée de main. `p95` = 95 % des connexions ont été plus rapides ; c'est lui qui montre les ralentissements que la moyenne cache. |
+| Latence de connexion | Temps de la poignée de main, en millisecondes. `p95` = 95 % des connexions ont été plus rapides ; c'est lui qui montre les ralentissements que la moyenne cache. |
 | Pic de connexions ouvertes | Maximum de connexions ouvertes au même instant. |
 | Octets envoyés / reçus | Charge utile seule, sans les en-têtes TCP/IP. |
 | Fermées par le serveur | Connexions que le serveur a coupées pendant le maintien `--hold`. |
@@ -229,19 +211,19 @@ sous Linux, `ProactorEventLoop` (IOCP) sous Windows. Il ne faut pas forcer
 
 | Fichier | Rôle |
 |---|---|
-| [stress.py](stress.py) | Point d'entrée de la ligne de commande. |
-| [panel.py](panel.py) | Point d'entrée du panel web. |
-| [stresser/web.py](stresser/web.py) | Serveur du panel : validation, jeton d'accès, suivi du test. |
-| [stresser/panel.html](stresser/panel.html) | Page du panel (HTML, CSS et JavaScript, sans dépendance). |
+| [stress.py](stress.py) | Point d'entrée. |
 | [inventory.txt](inventory.txt) | Inventaire des machines. |
-| [stresser/cli.py](stresser/cli.py) | Options, menu interactif, récapitulatif, confirmation. |
+| [stresser/cli.py](stresser/cli.py) | Options de la ligne de commande, mode sans menus. |
+| [stresser/menu.py](stresser/menu.py) | Les écrans : menu principal, assistant de test, inventaire, historique, réglages. |
+| [stresser/ui.py](stresser/ui.py) | Briques d'interface : menu à flèches, question, cadre, message. |
+| [stresser/term.py](stresser/term.py) | Terminal : couleurs, lecture des touches (Windows et Linux), dessin. |
 | [stresser/guard.py](stresser/guard.py) | Plages autorisées, validation de la cible, bornes d'intensité. |
 | [stresser/inventory.py](stresser/inventory.py) | Lecture de l'inventaire. |
 | [stresser/config.py](stresser/config.py) | Paramètres d'un test (`RunConfig`). |
 | [stresser/tcp.py](stresser/tcp.py) | Mode TCP, avec `asyncio`. |
 | [stresser/udp.py](stresser/udp.py) | Mode UDP, avec deux threads et un seau à jetons. |
 | [stresser/stats.py](stresser/stats.py) | Compteurs, percentiles, résumé, export CSV. |
-| [stresser/display.py](stresser/display.py) | Affichage en direct (`rich`, ou texte simple). |
+| [stresser/display.py](stresser/display.py) | Affichage en direct : tableau de bord, ou texte simple. |
 | [stresser/limits.py](stresser/limits.py) | Limites du système (fichiers ouverts, ports source). |
 | [tests/](tests/) | Tests automatiques. |
 
@@ -258,13 +240,17 @@ python -m unittest discover -s tests -t .
 ```
 
 Les tests n'envoient rien sur le réseau : les moteurs sont essayés contre de
-petits serveurs locaux sur `127.0.0.1`, et la ligne de commande est testée avec
-un faux moteur.
+petits serveurs locaux sur `127.0.0.1`, et les menus comme la ligne de commande
+sont testés avec un faux moteur.
 
 ## Affichage
 
-Avec `rich` installé et un vrai terminal, les statistiques s'affichent dans un
-tableau mis à jour sur place chaque seconde. Sans `rich`, avec `--plain`, ou si la
-sortie est redirigée vers un fichier, l'outil écrit une ligne de texte par
-seconde. Si le tableau s'affiche mal dans une console (cmd ancienne par exemple),
-utiliser `--plain`.
+L'interface n'utilise que des séquences ANSI et la bibliothèque standard, sur
+Windows comme sur Linux, y compris à travers SSH.
+
+| Situation | Ce que fait l'outil |
+|---|---|
+| Terminal normal | Menus à flèches, couleurs, tableau de bord redessiné sur place. |
+| Cadres ou barres mal affichés | Lancer avec `--ascii`, ou Réglages > Symboles. |
+| Sortie redirigée vers un fichier, ou `--plain` | Menus numérotés, une ligne de statistiques par seconde. |
+| Variable `NO_COLOR` définie | Mêmes menus, sans couleur. |
