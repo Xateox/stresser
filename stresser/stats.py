@@ -113,7 +113,7 @@ class TcpStats(_BaseStats):
         self._prev_succeeded = self.succeeded
         self._prev_latency_count = len(self.latencies_ms)
         return [
-            ("temps", f"{self.elapsed():.0f}/{cfg.duration:.0f} s"),
+            ("temps", f"{self.elapsed():.0f}/{cfg.duration:g} s"),
             ("ouvertes", str(self.active)),
             ("tentées", str(self.attempted)),
             ("réussies", str(self.succeeded)),
@@ -246,7 +246,7 @@ class UdpStats(_BaseStats):
         self._prev_sent = self.sent
         self._prev_bytes = self.bytes_sent
         return [
-            ("temps", f"{self.elapsed():.0f}/{cfg.duration:.0f} s"),
+            ("temps", f"{self.elapsed():.0f}/{cfg.duration:g} s"),
             ("envoyés", str(self.sent)),
             ("paquets/s", f"{pps:.0f}"),
             ("Mbit/s", f"{mbit:.2f}"),

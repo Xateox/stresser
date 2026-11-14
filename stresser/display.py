@@ -42,16 +42,17 @@ class RichDisplay:
 
         self._console = Console()
         self._live = Live(console=self._console, auto_refresh=False)
-        self._title = ""
 
     def start(self, title: str) -> None:
-        self._title = title
+        # Le titre est écrit une fois, au-dessus du tableau : en titre de tableau,
+        # rich le replierait sur la largeur (étroite) des colonnes.
+        self._console.print(title, highlight=False)
         self._live.start()
 
     def update(self, fields: Fields) -> None:
         from rich.table import Table
 
-        table = Table(title=self._title, show_header=False, title_justify="left")
+        table = Table(show_header=False)
         table.add_column(style="bold")
         table.add_column(justify="right")
         for label, value in fields:
