@@ -1,4 +1,6 @@
-"""Tests de la ligne de commande et du mode interactif.
+"""Tests de la ligne de commande (mode non interactif, avec -t).
+
+Les menus sont testés dans test_menu.py.
 
 Aucun trafic réseau ici : la fonction cli.execute (celle qui lance les moteurs)
 est remplacée par un faux, ce qui permet de vérifier AVEC QUELS PARAMÈTRES le test
@@ -173,9 +175,6 @@ class GuardTests(unittest.TestCase):
     def test_allow_host_refuse_une_ip_publique(self):
         self.assert_refused(["-t", "8.8.8.8", "-p", "53", "--allow-host", "8.8.8.8", "--yes"])
 
-    def test_ip_publique_tapee_dans_le_menu(self):
-        self.assert_refused([], answers=["8.8.8.8"])
-
 
 class ConfirmationTests(unittest.TestCase):
     ARGV = ["-t", "192.168.35.14", "-p", "8123"]
@@ -216,52 +215,6 @@ class ConfirmationTests(unittest.TestCase):
         code, _, _, execute = run_cli(argv, answers=["Proxmox"])
         self.assertEqual(code, cli.EXIT_OK)
         self.assertTrue(launched_config(execute).critical)
-
-
-class InteractiveTests(unittest.TestCase):
-    def test_choix_par_numero(self):
-        # 4e machine de l'inventaire = home-assistant ; protocole laissé par défaut.
-        code, out, _, execute = run_cli([], answers=["4", "8123", "", "5", "20", "o"])
-        cfg = launched_config(execute)
-        self.assertEqual(code, cli.EXIT_OK)
-        self.assertEqual((str(cfg.ip), cfg.port, cfg.proto), ("192.168.35.14", 8123, "tcp"))
-        self.assertEqual((cfg.duration, cfg.concurrency), (5.0, 20))
-        self.assertIn("Machines de l'inventaire", out)
-        self.assertIn("Cible : 192.168.35.14 (home-assistant)", out)
-
-    def test_ip_tapee_a_la_main_en_udp_avec_les_defauts(self):
-        _, out, _, execute = run_cli([], answers=["192.168.35.50", "9999", "udp", "", "", "o"])
-        cfg = launched_config(execute)
-        self.assertEqual((str(cfg.ip), cfg.port, cfg.proto), ("192.168.35.50", 9999, "udp"))
-        self.assertEqual((cfg.duration, cfg.rate, cfg.size), (10.0, 1000, 64))
-        self.assertIn("hors inventaire", out)
-
-    def test_saisies_invalides_reposees(self):
-        answers = ["99", "abc", "1",          # cible : hors liste, illisible, puis proxmox
-                   "0", "huit", "8006",       # port : hors bornes, illisible, puis valide
-                   "icmp", "tcp",             # protocole
-                   "-3", "5",                 # durée
-                   "", "proxmox"]             # concurrence par défaut, confirmation par le nom
-        code, _, _, execute = run_cli([], answers=answers)
-        cfg = launched_config(execute)
-        self.assertEqual(code, cli.EXIT_OK)
-        self.assertEqual((cfg.name, cfg.port, cfg.duration, cfg.concurrency), ("proxmox", 8006, 5.0, 50))
-        self.assertEqual(execute.asked, len(answers))
-
-    def test_options_deja_donnees_non_redemandees(self):
-        _, _, _, execute = run_cli(
-            ["-p", "8123", "--proto", "tcp", "--duration", "5", "--concurrency", "10"],
-            answers=["4", "o"])
-        cfg = launched_config(execute)
-        self.assertEqual((cfg.port, cfg.duration, cfg.concurrency), (8123, 5.0, 10))
-        self.assertEqual(execute.asked, 2)
-
-    def test_abandon_dans_le_menu(self):
-        for stop in (EOFError(), KeyboardInterrupt()):
-            with self.subTest(stop=type(stop).__name__):
-                code, _, _, execute = run_cli([], answers=["4", stop])
-                self.assertEqual(code, cli.EXIT_CANCELLED)
-                execute.assert_not_called()
 
 
 if __name__ == "__main__":

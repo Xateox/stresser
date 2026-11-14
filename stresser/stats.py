@@ -141,6 +141,12 @@ class TcpStats(_BaseStats):
             ("reçu", human_bytes(self.bytes_recv)),
         ]
 
+    def headline(self) -> str:
+        """Le résultat en une ligne, pour l'historique."""
+        elapsed = self.elapsed() or 1.0
+        return (f"{self.succeeded} réussies, {self.failed} échouées, "
+                f"{self.succeeded / elapsed:.0f} conn/s")
+
     def latency_summary(self) -> dict[str, float]:
         """min / moyenne / percentiles / max des temps de connexion, en millisecondes."""
         values = sorted(self.latencies_ms)
@@ -176,11 +182,10 @@ class TcpStats(_BaseStats):
 
         latency = self.latency_summary()
         if latency:
-            lines.append(
-                "Latence de connexion    : "
-                + " | ".join(f"{name} {value:.2f}" for name, value in latency.items())
-                + " (ms)"
-            )
+            def group(*names: str) -> str:
+                return " | ".join(f"{name} {latency[name]:.2f}" for name in names) + " (ms)"
+            lines.append(f"Latence de connexion    : {group('min', 'moy', 'max')}")
+            lines.append(f"  percentiles           : {group('p50', 'p95', 'p99')}")
         lines.append(
             f"Octets envoyés          : {human_bytes(self.bytes_sent)}"
             f" ({mbit_per_s(self.bytes_sent, elapsed):.2f} Mbit/s)"
@@ -281,6 +286,11 @@ class UdpStats(_BaseStats):
             ("reçus", str(self.received)),
             ("port injoignable", str(self.unreachable)),
         ]
+
+    def headline(self) -> str:
+        """Le résultat en une ligne, pour l'historique."""
+        elapsed = self.elapsed() or 1.0
+        return f"{self.sent} envoyés, {self.sent / elapsed:.0f} paquets/s, {self.received} reçus"
 
     def summary_lines(self, cfg: RunConfig) -> list[str]:
         elapsed = self.elapsed()

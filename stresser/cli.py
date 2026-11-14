@@ -1,10 +1,10 @@
-"""Ligne de commande : options, menu interactif, récapitulatif et confirmation.
+"""Ligne de commande : analyse des options, puis l'un des deux modes.
 
-Deux façons de lancer l'outil :
-- sans -t  : mode interactif. Un menu liste les machines de l'inventaire, puis
-             l'outil demande le port, le protocole, la durée et l'intensité.
-             Les options déjà données sur la ligne de commande ne sont pas redemandées.
-- avec -t  : mode non interactif. Tout vient des options ; --yes saute la confirmation.
+- sans -t  : l'application à menus (menu.py). On choisit la machine, le port et
+             l'intensité à l'écran. Les options de test données sur la ligne de
+             commande servent de valeurs par défaut.
+- avec -t  : mode non interactif, pour les scripts. Tout vient des options ;
+             --yes saute la confirmation.
 
 Dans les deux cas, la cible passe par guard.check_target() AVANT tout envoi.
 """
@@ -12,17 +12,18 @@ Dans les deux cas, la cible passe par guard.check_target() AVANT tout envoi.
 from __future__ import annotations
 
 import argparse
-import ipaddress
 import sys
 from pathlib import Path
 
-from . import __version__, guard, limits
+from . import __version__, guard, limits, term
 from .config import RunConfig
 from .display import make_display
 from .inventory import Machine, find_by_ip, load_inventory
+from .menu import App, Draft, Session
 from .stats import TcpStats, UdpStats, write_csv
 from .tcp import run_tcp
 from .udp import run_udp
+from .ui import UI
 
 DEFAULT_DURATION = 10.0
 DEFAULT_TIMEOUT = 3.0
@@ -30,13 +31,13 @@ DEFAULT_INVENTORY = Path(__file__).resolve().parent.parent / "inventory.txt"
 
 # Codes de sortie du programme
 EXIT_OK = 0
-EXIT_CANCELLED = 1      # l'utilisateur a répondu non, ou a quitté le menu
+EXIT_CANCELLED = 1      # l'utilisateur a répondu non, ou le test n'a pas pu démarrer
 EXIT_REFUSED = 2        # cible refusée ou paramètre invalide (même code qu'argparse)
 EXIT_INTERRUPTED = 130  # test arrêté par Ctrl+C (convention Unix : 128 + SIGINT)
 
 EPILOG = """\
 exemples :
-  python stress.py                                   menu interactif
+  python stress.py                                   menus (flèches, Entrée, Échap)
   python stress.py --list                            affiche l'inventaire
   python stress.py -t 192.168.35.14 -p 8123 --proto tcp --duration 30 --concurrency 100
   python stress.py -t 192.168.35.14 -p 8123 --size 512 --hold 1 --ramp
@@ -61,7 +62,7 @@ def _bounded(kind, minimum, maximum=None, strict=False):
         except ValueError:
             raise argparse.ArgumentTypeError(f"« {text} » n'est pas un nombre valide") from None
         too_low = value <= minimum if strict else value < minimum
-        if too_low or (maximum is not None and value > maximum):
+        if too_low or (maximum is not None and value > maximum) or value != value or value == float("inf"):
             comparison = ">" if strict else ">="
             upper = f" et <= {maximum}" if maximum is not None else ""
             raise argparse.ArgumentTypeError(f"doit être {comparison} {minimum}{upper}")
@@ -73,8 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="stress",
         description=(
-            "Test de charge TCP/UDP pour ton homelab. Sans -t, un menu interactif "
-            "permet de choisir la machine. Plages autorisées : " + guard.allowed_networks_text() + "."
+            "Test de charge TCP/UDP pour ton homelab. Sans -t, l'outil s'ouvre sur des "
+            "menus. Plages autorisées : " + guard.allowed_networks_text() + "."
         ),
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -83,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     target = parser.add_argument_group("cible")
     target.add_argument("-t", "--target", metavar="IP",
-                        help="adresse IPv4 de la cible (sans cette option : menu interactif)")
+                        help="adresse IPv4 de la cible (sans cette option : menus)")
     target.add_argument("-p", "--port", type=_bounded(int, 1, 65535), metavar="PORT",
                         help="port de la cible (1 à 65535)")
     target.add_argument("--proto", choices=("tcp", "udp"),
@@ -115,9 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     output = parser.add_argument_group("affichage et sortie")
     output.add_argument("--csv", type=Path, metavar="FICHIER",
-                        help="ajoute le résumé du test à ce fichier CSV")
+                        help="ajoute le résumé de chaque test à ce fichier CSV")
     output.add_argument("--plain", action="store_true",
-                        help="affichage en texte simple (sans rich)")
+                        help="texte simple : ni couleurs, ni menus à flèches, ni tableau de bord")
+    output.add_argument("--ascii", action="store_true",
+                        help="dessine les cadres et les barres en ASCII (console qui affiche mal l'Unicode)")
     output.add_argument("--yes", "-y", action="store_true",
                         help="ne demande pas de confirmation (mode scripté ; exige -t)")
     output.add_argument("--inventory", type=Path, metavar="FICHIER", default=DEFAULT_INVENTORY,
@@ -127,103 +130,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# --- Saisie interactive ------------------------------------------------------------
-
-def _ask_number(prompt: str, kind, default, minimum, maximum=None, strict=False):
-    """Demande un nombre, avec valeur par défaut ; repose la question tant qu'il est invalide."""
-    convert = _bounded(kind, minimum, maximum, strict)
-    suffix = f" [{default:g}]" if default is not None else ""
-    while True:
-        raw = input(f"{prompt}{suffix} : ").strip()
-        if not raw and default is not None:
-            return default
-        try:
-            return convert(raw)
-        except argparse.ArgumentTypeError as exc:
-            print(f"  Valeur invalide : {exc}.")
-
-
-def _ask_proto() -> str:
-    while True:
-        raw = input("Protocole (tcp/udp) [tcp] : ").strip().lower()
-        if raw in ("", "tcp", "udp"):
-            return raw or "tcp"
-        print("  Réponds tcp ou udp.")
-
-
-def _print_inventory(machines: list[Machine]) -> list[Machine]:
-    """Affiche les machines ciblables, numérotées. Retourne la liste affichée."""
-    listed = [machine for machine in machines if guard.is_targetable(machine.ip)]
-    hidden = len(machines) - len(listed)
-    if listed:
-        print("Machines de l'inventaire :")
-        for number, machine in enumerate(listed, start=1):
-            tag = "  [critique]" if machine.critical else ""
-            print(f"  {number:2d}) {str(machine.ip):<15}  {machine.label}{tag}")
-    else:
-        print("Inventaire vide.")
-    if hidden:
-        print(f"  ({hidden} machine(s) de l'inventaire hors des plages autorisées : non listée(s))")
-    return listed
-
-
-def _ask_target(machines: list[Machine], allow_hosts) -> ipaddress.IPv4Address:
-    """Menu de choix de la cible : numéro dans la liste, ou IP tapée à la main."""
-    listed = _print_inventory(machines)
-    while True:
-        raw = input("Choix (numéro de la liste, ou adresse IP) : ").strip()
-        if raw.isdigit():
-            if 1 <= int(raw) <= len(listed):
-                return guard.check_target(str(listed[int(raw) - 1].ip), allow_hosts)
-            print(f"  Numéro hors liste (1 à {len(listed)}).")
-            continue
-        try:
-            guard.parse_ipv4(raw)
-        except guard.TargetError:
-            print("  Tape un numéro de la liste ou une adresse IPv4 (ex. 192.168.35.14).")
-            continue
-        # IP bien formée : si elle est hors plage, TargetError remonte et l'outil s'arrête.
-        return guard.check_target(raw, allow_hosts)
-
-
-# --- Construction de la configuration ---------------------------------------------
+# --- Mode non interactif ------------------------------------------------------------
 
 def build_config(args: argparse.Namespace, machines: list[Machine], allow_hosts) -> RunConfig:
-    """Assemble un RunConfig à partir des options et, en mode interactif, des réponses."""
-    interactive = args.target is None
-
-    # 1. La cible, validée avant toute autre question.
-    if interactive:
-        ip = _ask_target(machines, allow_hosts)
-    else:
-        ip = guard.check_target(args.target, allow_hosts)
+    """Assemble un RunConfig à partir des options de la ligne de commande."""
+    ip = guard.check_target(args.target, allow_hosts)   # la cible d'abord
     machine = find_by_ip(machines, ip)
-    if interactive:
-        print(f"Cible : {ip} ({machine.label if machine else 'hors inventaire'})")
 
-    # 2. Port et protocole.
-    port, proto = args.port, args.proto
-    if port is None:
-        if not interactive:
-            raise UsageError("le port est obligatoire avec -t : ajoute -p PORT.")
-        port = _ask_number("Port", int, None, 1, 65535)
-    if proto is None:
-        proto = _ask_proto() if interactive else "tcp"
-
-    # 3. Durée et intensité : la valeur de la ligne de commande, sinon une question
-    #    (mode interactif), sinon le défaut modéré.
-    duration, concurrency, rate = args.duration, args.concurrency, args.rate
-    if duration is None:
-        duration = (_ask_number("Durée en secondes", float, DEFAULT_DURATION, 0, strict=True)
-                    if interactive else DEFAULT_DURATION)
-    if proto == "tcp" and concurrency is None:
-        concurrency = (_ask_number("Connexions simultanées", int, guard.DEFAULT_CONCURRENCY,
-                                   1, guard.MAX_CONCURRENCY)
-                       if interactive else guard.DEFAULT_CONCURRENCY)
-    if proto == "udp" and rate is None:
-        rate = (_ask_number("Paquets par seconde", int, guard.DEFAULT_RATE, 1, guard.MAX_RATE)
-                if interactive else guard.DEFAULT_RATE)
-
+    if args.port is None:
+        raise UsageError("le port est obligatoire avec -t : ajoute -p PORT.")
+    proto = args.proto or "tcp"
     size = args.size
     if size is None:
         size = 0 if proto == "tcp" else guard.DEFAULT_UDP_SIZE
@@ -233,12 +149,13 @@ def build_config(args: argparse.Namespace, machines: list[Machine], allow_hosts)
         raise UsageError(str(exc)) from None
 
     return RunConfig(
-        ip=ip, port=port, proto=proto, duration=duration,
+        ip=ip, port=args.port, proto=proto,
+        duration=args.duration if args.duration is not None else DEFAULT_DURATION,
         name=machine.name if machine else "",
         label=machine.label if machine else "",
         critical=machine.critical if machine else False,
-        concurrency=concurrency or guard.DEFAULT_CONCURRENCY,
-        rate=rate or guard.DEFAULT_RATE,
+        concurrency=args.concurrency or guard.DEFAULT_CONCURRENCY,
+        rate=args.rate or guard.DEFAULT_RATE,
         size=size, ramp=args.ramp, hold=args.hold, timeout=args.timeout,
     )
 
@@ -253,30 +170,14 @@ def ignored_options(args: argparse.Namespace, proto: str) -> list[str]:
     return [name for name, used in given.items() if used]
 
 
-# --- Récapitulatif et confirmation -------------------------------------------------
-
-def intensity_text(cfg: RunConfig) -> str:
-    """Résume l'intensité d'un test en une phrase (récapitulatif, panel web)."""
-    if cfg.proto == "udp":
-        return f"{cfg.rate} paquets/s de {cfg.size} octets"
-    payload = f"{cfg.size} octets par connexion" if cfg.size else "connecter puis fermer"
-    text = f"{cfg.concurrency} connexions simultanées, {payload}"
-    if cfg.hold:
-        text += f", maintien {cfg.hold:g} s"
-    if cfg.ramp:
-        text += ", montée progressive"
-    return text
-
-
 def recap_lines(cfg: RunConfig) -> list[str]:
-    intensity = intensity_text(cfg)
     return [
         "----- Récapitulatif -----",
         f"Cible     : {cfg.ip}",
         f"Machine   : {cfg.display_name}" + ("  [critique]" if cfg.critical else ""),
         f"Port      : {cfg.port}",
         f"Protocole : {cfg.proto.upper()}",
-        f"Intensité : {intensity}",
+        f"Intensité : {cfg.intensity_text()}",
         f"Durée     : {cfg.duration:g} s",
     ]
 
@@ -291,16 +192,53 @@ def confirm(cfg: RunConfig) -> bool:
     return answer.strip().lower() in ("o", "oui", "y", "yes")
 
 
+def print_inventory(machines: list[Machine]) -> None:
+    """Option --list : les machines ciblables, une par ligne."""
+    listed = [machine for machine in machines if guard.is_targetable(machine.ip)]
+    hidden = len(machines) - len(listed)
+    if listed:
+        print("Machines de l'inventaire :")
+        for machine in listed:
+            tag = "  [critique]" if machine.critical else ""
+            print(f"  {str(machine.ip):<15}  {machine.label}{tag}")
+    else:
+        print("Inventaire vide.")
+    if hidden:
+        print(f"  ({hidden} machine(s) de l'inventaire hors des plages autorisées : non listée(s))")
+
+
 # --- Exécution -----------------------------------------------------------------------
 
-def execute(cfg: RunConfig, plain: bool = False) -> TcpStats | UdpStats:
+def execute(cfg: RunConfig, theme: term.Theme | None = None, ansi: bool = False) -> TcpStats | UdpStats:
     """Lance le moteur correspondant au protocole. C'est ici que le trafic part."""
-    display = make_display(plain)
+    display = make_display(cfg, theme, ansi)
     return run_tcp(cfg, display) if cfg.proto == "tcp" else run_udp(cfg, display)
 
 
 def _error(message: str) -> None:
     print(f"Erreur : {message}", file=sys.stderr)
+
+
+def run_menus(args: argparse.Namespace, machines: list[Machine], allow_hosts,
+              theme: term.Theme, ansi: bool) -> int:
+    """Ouvre l'application à menus."""
+    ui = UI(theme, interactive=ansi and sys.stdin.isatty())
+    session = Session(
+        machines=machines, inventory_path=args.inventory, allow_hosts=allow_hosts,
+        csv_path=args.csv, timeout=args.timeout,
+        # Les options de test données sans -t deviennent les valeurs proposées par défaut.
+        defaults=Draft(
+            proto=args.proto or "tcp", port=args.port,
+            duration=args.duration if args.duration is not None else DEFAULT_DURATION,
+            concurrency=args.concurrency or guard.DEFAULT_CONCURRENCY,
+            rate=args.rate or guard.DEFAULT_RATE,
+            size=args.size, hold=args.hold, ramp=args.ramp,
+        ),
+    )
+    if not ui.interactive:
+        ui.banner()     # en texte simple, le bandeau n'est écrit qu'une fois
+    # ui.theme est relu à chaque test : les réglages d'apparence s'appliquent aussitôt.
+    return App(ui, session, lambda cfg: execute(cfg, ui.theme, ansi)).run()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -312,27 +250,26 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(errors="replace")
 
     args = build_parser().parse_args(argv)
+    theme, ansi = term.detect(plain=args.plain, ascii_only=args.ascii)
     machines, inventory_warnings = load_inventory(args.inventory)
     for warning in inventory_warnings:
         print(f"Attention : {warning}", file=sys.stderr)
 
     if args.list:
-        _print_inventory(machines)
+        print_inventory(machines)
         return EXIT_OK
-
     if args.yes and args.target is None:
         _error("--yes sert au mode scripté et exige une cible : ajoute -t IP.")
         return EXIT_REFUSED
 
     try:
         allow_hosts = guard.parse_allow_hosts(args.allow_host)
+        if args.target is None:
+            return run_menus(args, machines, allow_hosts, theme, ansi)
         cfg = build_config(args, machines, allow_hosts)
     except (guard.TargetError, UsageError) as exc:
         _error(str(exc))
         return EXIT_REFUSED
-    except (EOFError, KeyboardInterrupt):
-        print("\nAnnulé.")
-        return EXIT_CANCELLED
 
     print()
     for line in recap_lines(cfg):
@@ -356,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     try:
-        stats = execute(cfg, plain=args.plain)
+        stats = execute(cfg, theme, ansi)
     except OSError as exc:
         # Par exemple : aucune route vers la cible depuis cette machine.
         _error(f"impossible de lancer le test : {exc.strerror or exc}")

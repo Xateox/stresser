@@ -31,3 +31,15 @@ class RunConfig:
     def display_name(self) -> str:
         """Nom à afficher dans les récapitulatifs."""
         return self.label or self.name or "hors inventaire"
+
+    def intensity_text(self) -> str:
+        """Résume l'intensité du test en une phrase."""
+        if self.proto == "udp":
+            return f"{self.rate} paquets/s de {self.size} octets"
+        payload = f"{self.size} octets par connexion" if self.size else "connecter puis fermer"
+        text = f"{self.concurrency} connexions simultanées, {payload}"
+        if self.hold:
+            text += f", maintien {self.hold:g} s"
+        if self.ramp:
+            text += ", montée progressive"
+        return text
