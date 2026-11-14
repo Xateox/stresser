@@ -91,6 +91,47 @@ python stress.py -t 192.168.35.16 -p 3001 --duration 10 --yes
 Codes de sortie : `0` test terminé, `1` annulé, `2` cible refusée ou paramètre
 invalide, `130` test interrompu par Ctrl+C.
 
+## Panel web
+
+Le panel fait la même chose que la ligne de commande, depuis un navigateur :
+formulaire, récapitulatif à confirmer, statistiques et graphique en direct,
+bouton d'arrêt, historique des tests de la session.
+
+```powershell
+python panel.py            # puis ouvrir l'adresse affichée dans la console
+python panel.py --open     # ouvre directement le navigateur
+python panel.py --csv tests.csv --port 9000
+```
+
+La console affiche une adresse de la forme `http://127.0.0.1:8080/?token=...`.
+Le jeton change à chaque démarrage ; sans lui, le panel refuse tout.
+
+| Option | Rôle | Défaut |
+|---|---|---|
+| `--bind IP` | Adresse d'écoute. `0.0.0.0` = toutes les interfaces. | `127.0.0.1` |
+| `--port PORT` | Port d'écoute. | 8080 |
+| `--allow-host IP` | Autorise une IP privée hors plage pour la session. | aucune |
+| `--csv FICHIER` | Ajoute le résumé de chaque test à un CSV. | aucun |
+| `--inventory FICHIER` | Autre fichier d'inventaire. | `inventory.txt` |
+| `--open` | Ouvre le navigateur par défaut. | non |
+
+**Les garde-fous sont les mêmes** et sont appliqués par le serveur, pas par la
+page : plage autorisée, confirmation obligatoire, nom à retaper pour une machine
+critique, un seul test à la fois. `--allow-host` ne se règle qu'au démarrage.
+
+**Depuis un autre poste (panel sur la VM Linux).** Par défaut le panel n'écoute
+que sur `127.0.0.1`. Le plus sûr est de le laisser ainsi et de passer par un
+tunnel SSH depuis le PC :
+
+```powershell
+ssh -L 8080:127.0.0.1:8080 utilisateur@adresse-de-la-vm
+```
+
+puis d'ouvrir sur le PC l'adresse affichée par le panel. Avec `--bind 0.0.0.0`,
+le panel devient joignable par tout le réseau local : le jeton reste exigé, mais
+il circule en clair (HTTP). Les clients d'une adresse publique sont toujours
+refusés. Ne jamais exposer ce port sur Internet.
+
 ## Inventaire
 
 [inventory.txt](inventory.txt) contient une machine par ligne : `IP  nom  description`.
@@ -188,7 +229,10 @@ sous Linux, `ProactorEventLoop` (IOCP) sous Windows. Il ne faut pas forcer
 
 | Fichier | Rôle |
 |---|---|
-| [stress.py](stress.py) | Point d'entrée. |
+| [stress.py](stress.py) | Point d'entrée de la ligne de commande. |
+| [panel.py](panel.py) | Point d'entrée du panel web. |
+| [stresser/web.py](stresser/web.py) | Serveur du panel : validation, jeton d'accès, suivi du test. |
+| [stresser/panel.html](stresser/panel.html) | Page du panel (HTML, CSS et JavaScript, sans dépendance). |
 | [inventory.txt](inventory.txt) | Inventaire des machines. |
 | [stresser/cli.py](stresser/cli.py) | Options, menu interactif, récapitulatif, confirmation. |
 | [stresser/guard.py](stresser/guard.py) | Plages autorisées, validation de la cible, bornes d'intensité. |
